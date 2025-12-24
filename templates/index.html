@@ -1,0 +1,648 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Food Marketplace</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; -webkit-tap-highlight-color: transparent; background-color: #f8fafc; }
+        .fade-in { animation: fadeIn 0.3s ease-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .slide-up { animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1); }
+        @keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
+        .chat-bubble { max-width: 85%; padding: 10px 14px; margin-bottom: 6px; font-size: 0.95rem; line-height: 1.4; word-wrap: break-word; }
+        .chat-me { background: linear-gradient(135deg, #ea580c, #c2410c); color: white; align-self: flex-end; border-radius: 18px 18px 2px 18px; }
+        .chat-other { background: #f3f4f6; color: #1f2937; align-self: flex-start; border-radius: 18px 18px 18px 2px; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        
+        /* Icons */
+        .veg-icon { border: 2px solid #16a34a; padding: 2px; width: 16px; height: 16px; display: flex; align-items: center; justify-content: center; }
+        .veg-dot { background: #16a34a; width: 8px; height: 8px; border-radius: 50%; }
+        .non-veg-icon { border: 2px solid #dc2626; padding: 2px; width: 16px; height: 16px; display: flex; align-items: center; justify-content: center; }
+        .non-veg-dot { background: #dc2626; width: 8px; height: 8px; border-radius: 50%; }
+        .egg-icon { border: 2px solid #eab308; padding: 2px; width: 16px; height: 16px; display: flex; align-items: center; justify-content: center; }
+        .egg-dot { background: #eab308; width: 8px; height: 8px; border-radius: 50%; }
+
+        /* Profile Header Gradient */
+        .profile-header-customer { background: linear-gradient(135deg, #ff9a9e 0%, #fecfef 99%, #fecfef 100%); }
+        .profile-header-restaurant { background: linear-gradient(135deg, #f6d365 0%, #fda085 100%); }
+        .profile-header-delivery { background: linear-gradient(135deg, #84fab0 0%, #8fd3f4 100%); }
+    </style>
+</head>
+<body class="text-gray-900">
+    <div id="root"></div>
+
+    <!-- Django Template Tag: Tell Django to ignore React syntax inside this block -->
+    {% verbatim %}
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+        const isLocal = window.location.protocol === 'file:' || window.location.port === '3000';
+        const API_BASE = isLocal ? 'http://127.0.0.1:8000' : '';
+        const DELIVERY_RATE = 5.00; // Fixed rate per delivery for calculation display
+
+        // --- AUTH & API HELPERS ---
+        function getCookie(name) {
+            let cookieValue = null;
+            if (document.cookie && document.cookie !== '') {
+                const cookies = document.cookie.split(';');
+                for (let i = 0; i < cookies.length; i++) {
+                    const cookie = cookies[i].trim();
+                    if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                        cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                        break;
+                    }
+                }
+            }
+            return cookieValue;
+        }
+
+        const apiCall = async (endpoint, method='GET', body=null) => {
+            const token = localStorage.getItem('token');
+            const headers = {};
+            if (token) headers['Authorization'] = `Bearer ${token}`;
+            if (!isLocal) {
+                const csrftoken = getCookie('csrftoken');
+                if (csrftoken) headers['X-CSRFToken'] = csrftoken;
+            }
+            let options = { method, headers };
+            if (body) {
+                if (body instanceof FormData) {
+                    options.body = body;
+                } else {
+                    headers['Content-Type'] = 'application/json';
+                    options.body = JSON.stringify(body);
+                }
+            }
+            try {
+                const res = await fetch(`${API_BASE}${endpoint}`, options);
+                if (res.status === 401) { 
+                    console.warn("Session expired. Logging out.");
+                    auth.logout(); 
+                    return null; 
+                }
+                return res;
+            } catch (error) { console.error("API Error:", error); throw error; }
+        };
+
+        const auth = {
+            getToken: () => localStorage.getItem('token'),
+            getUser: () => JSON.parse(localStorage.getItem('user') || 'null'),
+            logout: () => { localStorage.clear(); window.location.reload(); },
+            login: async (creds) => {
+                const res = await fetch(`${API_BASE}/api/auth/login/`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(creds)});
+                if(!res.ok) throw new Error('Invalid credentials');
+                const data = await res.json();
+                localStorage.setItem('token', data.access); localStorage.setItem('user', JSON.stringify(data.user));
+            },
+            requestOtp: async (email, purpose) => {
+                const res = await fetch(`${API_BASE}/api/auth/request-otp/`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({email, purpose}) });
+                if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Failed to send OTP'); }
+            },
+            register: async (formData) => {
+                const res = await fetch(`${API_BASE}/api/auth/register-verify/`, { method: 'POST', body: formData });
+                if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'Registration failed'); }
+                const data = await res.json();
+                localStorage.setItem('token', data.access); localStorage.setItem('user', JSON.stringify(data.user));
+            },
+            resetPassword: async (data) => {
+                const res = await fetch(`${API_BASE}/api/auth/reset-password/`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(data)});
+                if(!res.ok) { const err = await res.json(); throw new Error(err.error || 'Reset failed'); }
+            },
+            getProfile: async (userId=null) => {
+                const url = userId ? `/api/auth/profile/?user_id=${userId}` : `/api/auth/profile/`;
+                const res = await apiCall(url);
+                return res && res.ok ? await res.json() : null;
+            }
+        };
+
+        const timeAgo = (dateStr) => {
+            const d = new Date(dateStr); if(isNaN(d.getTime())) return "";
+            const diff = Math.floor((new Date() - d) / 60000); 
+            if (diff < 1) return 'Just now'; if (diff < 60) return `${diff}m ago`;
+            const hours = Math.floor(diff / 60); if (hours < 24) return `${hours}h ago`;
+            return d.toLocaleDateString();
+        };
+
+        const FoodTypeIcon = ({ type }) => {
+            if (type === 'non_veg') return <div className="non-veg-icon" title="Non-Veg"><div className="non-veg-dot"></div></div>;
+            if (type === 'egg') return <div className="egg-icon" title="Contains Egg"><div className="egg-dot"></div></div>;
+            return <div className="veg-icon" title="Veg"><div className="veg-dot"></div></div>;
+        };
+
+        const SearchBar = ({ value, onChange, placeholder }) => (
+            <div className="relative shadow-sm group">
+                <span className="absolute left-3 top-3.5 text-gray-400 group-focus-within:text-orange-500 transition-colors">🔍</span>
+                <input 
+                    type="text" 
+                    value={value} 
+                    onChange={(e) => onChange(e.target.value)} 
+                    placeholder={placeholder} 
+                    className="w-full pl-10 pr-10 py-3 rounded-xl border border-gray-200 bg-white focus:ring-2 focus:ring-orange-500 focus:border-orange-500 outline-none transition-all"
+                />
+                {value && (
+                    <button 
+                        onClick={() => onChange('')} 
+                        className="absolute right-3 top-3 text-gray-400 hover:text-gray-600 bg-gray-100 rounded-full w-7 h-7 flex items-center justify-center text-xs transition"
+                    >
+                        ✕
+                    </button>
+                )}
+            </div>
+        );
+
+        // --- FULL PROFILE COMPONENT ---
+
+        const StandardProfile = ({ userId, onClose }) => {
+            const [data, setData] = useState(null);
+            const [history, setHistory] = useState([]);
+            const [activeTab, setActiveTab] = useState('stats');
+            const currentUser = auth.getUser();
+
+            useEffect(() => {
+                const load = async () => {
+                    const profileData = await auth.getProfile(userId);
+                    if (profileData) {
+                        setData(profileData);
+                        // Fetch Orders Logic for History Tab
+                        if (currentUser && (currentUser.id === profileData.user.id || profileData.user.role === 'customer')) {
+                            const res = await apiCall('/api/orders/');
+                            if (res && res.ok) {
+                                const allOrders = await res.json();
+                                let userHistory = [];
+                                if (profileData.user.role === 'customer') {
+                                    userHistory = allOrders.filter(o => o.customer === profileData.user.id);
+                                } else if (profileData.user.role === 'restaurant') {
+                                    userHistory = allOrders; // API already filters for restaurant owner
+                                } else if (profileData.user.role === 'delivery') {
+                                    userHistory = allOrders.filter(o => o.delivery_partner === profileData.user.id && o.status === 'delivered');
+                                }
+                                setHistory(userHistory);
+                            }
+                        }
+                    }
+                };
+                load();
+            }, [userId]);
+
+            if (!data) return <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center text-white backdrop-blur-sm"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white"></div></div>;
+
+            const { user, stats, details, items } = data;
+            
+            // Dynamic Header Color based on Role
+            const headerClass = user.role === 'restaurant' ? 'profile-header-restaurant' : (user.role === 'delivery' ? 'profile-header-delivery' : 'profile-header-customer');
+
+            // Determine Stats Labels and Values
+            let financialLabel = 'Spent';
+            let financialValue = stats.total_spent || 0;
+            if (user.role === 'restaurant') {
+                financialLabel = 'Revenue';
+                financialValue = stats.revenue || 0;
+            } else if (user.role === 'delivery') {
+                financialLabel = 'Earnings';
+                financialValue = stats.earnings || 0;
+            }
+
+            return (
+                <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-fade-in" onClick={onClose}>
+                    <div className="bg-white w-full max-w-md rounded-3xl overflow-hidden shadow-2xl slide-up flex flex-col max-h-[90vh]" onClick={e => e.stopPropagation()}>
+                        
+                        {/* Header */}
+                        <div className={`p-6 ${headerClass} relative`}>
+                            <button onClick={onClose} className="absolute top-4 right-4 bg-white/30 hover:bg-white/50 p-2 rounded-full text-white transition backdrop-blur-sm">✕</button>
+                            <div className="flex flex-col items-center">
+                                <div className="w-24 h-24 rounded-full border-4 border-white shadow-lg overflow-hidden bg-white mb-3">
+                                    {details?.image ? <img src={`${API_BASE}${details.image}`} className="w-full h-full object-cover"/> : <div className="w-full h-full flex items-center justify-center text-4xl bg-gray-100">👤</div>}
+                                </div>
+                                <h2 className="text-2xl font-bold text-white shadow-sm">{user.first_name ? `${user.first_name} ${user.last_name}` : user.username}</h2>
+                                <p className="text-white/90 text-sm font-medium">@{user.username}</p>
+                                <span className="mt-2 px-3 py-1 bg-white/20 backdrop-blur-md rounded-full text-xs font-bold text-white uppercase tracking-wider border border-white/30">{user.role.replace('_', ' ')}</span>
+                            </div>
+                        </div>
+
+                        {/* Tabs */}
+                        <div className="flex border-b border-gray-100">
+                            <button onClick={()=>setActiveTab('stats')} className={`flex-1 py-4 text-sm font-bold transition ${activeTab==='stats'?'text-gray-800 border-b-2 border-gray-800':'text-gray-400 hover:text-gray-600'}`}>Overview</button>
+                            <button onClick={()=>setActiveTab('history')} className={`flex-1 py-4 text-sm font-bold transition ${activeTab==='history'?'text-gray-800 border-b-2 border-gray-800':'text-gray-400 hover:text-gray-600'}`}>History</button>
+                        </div>
+
+                        {/* Content */}
+                        <div className="overflow-y-auto p-6 flex-1 bg-gray-50/50">
+                            
+                            {activeTab === 'stats' && (
+                                <div className="space-y-4 fade-in">
+                                    {/* Stats Grid */}
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 text-center">
+                                            <div className="text-3xl font-black text-gray-800">{stats.total_orders || stats.total_deliveries || 0}</div>
+                                            <div className="text-xs text-gray-400 uppercase font-bold tracking-wider mt-1">{user.role === 'delivery' ? 'Deliveries' : 'Orders'}</div>
+                                        </div>
+                                        <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 text-center">
+                                            <div className="text-3xl font-black text-green-600">${parseFloat(financialValue).toFixed(2)}</div>
+                                            <div className="text-xs text-gray-400 uppercase font-bold tracking-wider mt-1">{financialLabel}</div>
+                                            {user.role === 'delivery' && <div className="text-[9px] text-gray-400 mt-1">Rate: ${DELIVERY_RATE}/order</div>}
+                                        </div>
+                                    </div>
+
+                                    {/* Details List */}
+                                    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+                                        <div className="p-4 border-b border-gray-50 flex items-center gap-3">
+                                            <span className="text-gray-400">📧</span>
+                                            <div className="flex-1 overflow-hidden"><p className="text-xs text-gray-400 uppercase font-bold">Email</p><p className="text-sm font-medium truncate">{user.email}</p></div>
+                                        </div>
+                                        {user.date_of_birth && (
+                                            <div className="p-4 border-b border-gray-50 flex items-center gap-3">
+                                                <span className="text-gray-400">🎂</span>
+                                                <div><p className="text-xs text-gray-400 uppercase font-bold">Birthday</p><p className="text-sm font-medium">{user.date_of_birth}</p></div>
+                                            </div>
+                                        )}
+                                        {details.address && (
+                                            <div className="p-4 flex items-center gap-3">
+                                                <span className="text-gray-400">📍</span>
+                                                <div><p className="text-xs text-gray-400 uppercase font-bold">Location</p><p className="text-sm font-medium">{details.address}</p></div>
+                                            </div>
+                                        )}
+                                        <div className="p-4 bg-gray-50 text-xs text-center text-gray-400">
+                                            Member since {new Date(user.date_joined).toLocaleDateString()}
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {activeTab === 'history' && (
+                                <div className="space-y-3 fade-in">
+                                    {history.length === 0 && <div className="text-center py-10 text-gray-400 text-sm">No history found.</div>}
+                                    {history.map(item => (
+                                        <div key={item.id} className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex justify-between items-center hover:shadow-md transition">
+                                            <div>
+                                                <div className="font-bold text-sm text-gray-800 flex items-center gap-2">
+                                                    Order #{item.id}
+                                                    {user.role === 'restaurant' && <span className="text-[10px] font-normal text-gray-500">via {item.customer_name || 'App'}</span>}
+                                                </div>
+                                                <div className="text-xs text-gray-400 mt-1">{new Date(item.created_at).toLocaleDateString()} • {new Date(item.created_at).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</div>
+                                            </div>
+                                            <div className="text-right">
+                                                <div className="font-bold text-gray-900">${item.total_price}</div>
+                                                <span className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded-md ${item.status==='delivered'?'bg-green-100 text-green-700':(item.status==='cancelled'?'bg-red-50 text-red-600':'bg-blue-50 text-blue-600')}`}>
+                                                    {item.status.replace('_',' ')}
+                                                </span>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        // --- DISH DETAIL & REVIEW MODAL ---
+
+        const DishDetailModal = ({ dish, onClose, onAdd }) => {
+            const [reviews, setReviews] = useState([]);
+            const [loadingReviews, setLoadingReviews] = useState(true);
+
+            useEffect(() => {
+                const fetchReviews = async () => {
+                    const res = await apiCall(`/api/reviews/?dish=${dish.id}`);
+                    if (res && res.ok) {
+                        setReviews(await res.json());
+                    }
+                    setLoadingReviews(false);
+                };
+                fetchReviews();
+            }, [dish]);
+
+            return (
+                <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm" onClick={onClose}>
+                    <div className="bg-white w-full max-w-md rounded-3xl overflow-hidden shadow-2xl slide-up flex flex-col max-h-[90vh]" onClick={e=>e.stopPropagation()}>
+                        <div className="h-56 bg-gray-200 relative flex-shrink-0">
+                            {dish.image ? <img src={dish.image} className="w-full h-full object-cover"/> : <div className="w-full h-full flex items-center justify-center text-6xl">🍲</div>}
+                            <div className="absolute top-0 left-0 w-full h-full bg-gradient-to-t from-black/60 to-transparent"></div>
+                            <button onClick={onClose} className="absolute top-4 right-4 bg-white/20 backdrop-blur-md p-2 rounded-full text-white hover:bg-white/40 transition">✕</button>
+                            <div className="absolute bottom-4 left-4 text-white"><h2 className="text-3xl font-bold flex items-center gap-2 shadow-sm">{dish.name} <FoodTypeIcon type={dish.food_type}/></h2></div>
+                        </div>
+                        <div className="p-6 overflow-y-auto flex-1">
+                            <div className="flex justify-between items-start mb-4">
+                                <span className="bg-green-100 text-green-700 font-bold px-4 py-1.5 rounded-full text-lg">${dish.price}</span>
+                            </div>
+                            <p className="text-gray-600 text-sm mb-8 leading-relaxed">{dish.description || "No detailed description available for this item."}</p>
+                            
+                            <div className="border-t border-gray-100 pt-4 mb-6">
+                                <h3 className="font-bold text-xs text-gray-400 mb-3 uppercase tracking-wide">Customer Reviews</h3>
+                                <div className="space-y-3 max-h-32 overflow-y-auto no-scrollbar">
+                                    {loading && <p className="text-center text-xs text-gray-400">Loading reviews...</p>}
+                                    {!loading && reviews.length === 0 && <p className="text-center text-xs text-gray-400">No reviews yet.</p>}
+                                    {reviews.map((r, i) => (
+                                        <div key={i} className="bg-gray-50 p-3 rounded-xl border border-gray-100">
+                                            <div className="flex justify-between mb-1">
+                                                <span className="text-xs font-bold text-gray-800">{r.username || 'User'}</span>
+                                                <span className="text-orange-500 text-xs">{'⭐'.repeat(r.rating)}</span>
+                                            </div>
+                                            <p className="text-xs text-gray-500">{r.comment}</p>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+                        <div className="p-4 border-t border-gray-50 bg-white">
+                            <button onClick={()=>{onAdd(dish); onClose();}} className="w-full bg-gray-900 text-white py-4 rounded-xl font-bold shadow-lg shadow-gray-300 hover:scale-[1.02] transition transform">Add to Order</button>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        // --- OTHER MODALS ---
+        const ChatModal = ({ order, onClose }) => {
+            const [msgs, setMsgs] = useState([]);
+            const [txt, setTxt] = useState('');
+            const user = auth.getUser();
+            const bottomRef = useRef(null);
+            const fetchMsgs = async () => { const res = await apiCall(`/api/orders/${order.id}/messages/`); if(res && res.ok) setMsgs(await res.json()); };
+            useEffect(() => { fetchMsgs(); const i = setInterval(fetchMsgs, 3000); return () => clearInterval(i); }, []);
+            useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs]);
+            const send = async (e) => { e.preventDefault(); if(!txt.trim()) return; await apiCall(`/api/orders/${order.id}/send_message/`, 'POST', { text: txt }); setTxt(''); fetchMsgs(); };
+            return (
+                <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+                    <div className="bg-white w-full max-w-md rounded-3xl shadow-2xl flex flex-col h-[600px] max-h-[90vh] slide-up overflow-hidden"><div className="p-4 border-b flex justify-between items-center bg-gray-50"><div className="flex items-center gap-2"><div className="w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse"></div><div><h3 className="font-bold text-gray-800">Order #{order.id}</h3><p className="text-xs text-gray-500">Live Chat</p></div></div><button onClick={onClose} className="bg-white p-1 rounded-full shadow hover:bg-gray-100">✕</button></div><div className="flex-1 overflow-y-auto p-4 flex flex-col gap-2 bg-white">{msgs.length===0 && <div className="flex flex-col items-center justify-center h-full text-gray-300"><span className="text-4xl mb-2">💬</span><p className="text-sm">Start the conversation...</p></div>}{msgs.map(m => (<div key={m.id} className={`chat-bubble max-w-[85%] px-4 py-2 ${m.sender === user.id ? 'chat-me' : 'chat-other'}`}><div className="text-[10px] opacity-75 mb-0.5 font-bold uppercase tracking-wide">{m.sender_name}</div><div>{m.text}</div></div>))}<div ref={bottomRef} /></div><form onSubmit={send} className="p-3 border-t bg-gray-50 flex gap-2"><input value={txt} onChange={e=>setTxt(e.target.value)} placeholder="Type a message..." className="flex-1 p-3 bg-white border rounded-xl outline-none focus:ring-2 focus:ring-orange-500 transition shadow-sm" /><button className="bg-orange-600 text-white px-5 py-2 rounded-xl font-bold shadow-lg hover:bg-orange-700 transition">Send</button></form></div>
+                </div>
+            );
+        };
+
+        const NotificationBell = () => {
+            const [notifs, setNotifs] = useState([]);
+            const [show, setShow] = useState(false);
+            useEffect(() => {
+                const fetchN = async () => { const res = await apiCall(`/api/auth/notifications/`); if(res&&res.ok) setNotifs(await res.json()); };
+                fetchN(); const i = setInterval(fetchN, 5000); return () => clearInterval(i);
+            }, []);
+            return (
+                <div className="relative">
+                    <button onClick={()=>setShow(!show)} className="relative p-2 bg-gray-100 rounded-xl hover:bg-gray-200 transition"><span className="text-xl">🔔</span>{notifs.length > 0 && <span className="absolute top-0 right-0 bg-red-500 w-3 h-3 rounded-full border-2 border-white"></span>}</button>
+                    {show && <><div className="fixed inset-0 z-40" onClick={()=>setShow(false)}></div><div className="absolute right-0 top-14 w-80 bg-white shadow-2xl rounded-2xl border border-gray-100 z-50 p-2 max-h-96 overflow-y-auto fade-in"><div className="flex justify-between items-center px-3 py-2 mb-2 border-b border-gray-50"><h4 className="text-xs font-bold text-gray-400 tracking-widest uppercase">Notifications</h4>{notifs.length > 0 && <span className="text-xs text-orange-600 font-bold">{notifs.length} new</span>}</div>{notifs.length === 0 && <div className="text-center py-8 text-gray-400 text-sm">No new alerts 💤</div>}{notifs.map(n => (<div key={n.id} className="p-3 hover:bg-orange-50 rounded-xl mb-1 transition cursor-default"><div className="flex gap-3"><div className="w-2 h-2 rounded-full bg-orange-500 mt-1.5 flex-shrink-0"></div><div><p className="text-sm text-gray-800 font-medium leading-snug">{n.message}</p><p className="text-[10px] text-gray-400 mt-1">{timeAgo(n.created_at)}</p></div></div></div>))}</div></>}
+                </div>
+            );
+        };
+
+        const ReviewModal = ({ order, onClose }) => {
+            const [rating, setRating] = useState(5);
+            const [comment, setComment] = useState('');
+            const submit = async () => { await apiCall(`/api/reviews/`, 'POST', { dish: order.dishes[0], rating, comment }); alert("Review Submitted!"); onClose(); };
+            return (<div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"><div className="bg-white w-full max-w-sm rounded-3xl p-6 fade-in shadow-2xl"><h3 className="font-bold text-xl mb-6 text-center text-gray-800">Rate Your Meal</h3><div className="flex justify-center gap-2 mb-6">{[1,2,3,4,5].map(r => (<button key={r} onClick={()=>setRating(r)} className={`w-10 h-10 text-lg font-bold rounded-xl transition transform hover:scale-110 ${rating>=r ? 'bg-orange-500 text-white shadow-lg shadow-orange-200' : 'bg-gray-100 text-gray-400'}`}>{r}</button>))}</div><textarea className="w-full bg-gray-50 border p-4 rounded-xl mb-4 text-sm focus:ring-2 focus:ring-orange-500 outline-none" rows="3" placeholder="How was the food?" value={comment} onChange={e=>setComment(e.target.value)}></textarea><div className="flex gap-3"><button onClick={onClose} className="flex-1 bg-gray-100 text-gray-600 py-3 rounded-xl font-bold hover:bg-gray-200">Cancel</button><button onClick={submit} className="flex-1 bg-gray-900 text-white py-3 rounded-xl font-bold hover:bg-black">Submit</button></div></div></div>);
+        };
+
+        const ForgotPasswordModal = ({ onClose }) => {
+            const [step, setStep] = useState(1);
+            const [email, setEmail] = useState('');
+            const [resetData, setResetData] = useState({ otp: '', new_password: '' });
+            const [loading, setLoading] = useState(false);
+            const handleRequest = async (e) => { e.preventDefault(); setLoading(true); try { await auth.requestOtp(email, 'reset'); setStep(2); } catch(err) { alert(err.message); } finally { setLoading(false); } };
+            const handleConfirm = async (e) => { e.preventDefault(); setLoading(true); try { await auth.resetPassword({ email, ...resetData }); alert("Password Reset Successful!"); onClose(); } catch(err) { alert(err.message); } finally { setLoading(false); } };
+            return (<div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm"><div className="bg-white w-full max-w-sm rounded-3xl p-8 fade-in shadow-2xl"><h3 className="font-bold text-xl mb-4 text-gray-800">Reset Password</h3>{step === 1 ? (<form onSubmit={handleRequest} className="space-y-4"><p className="text-sm text-gray-500">Enter your registered email address.</p><input type="email" placeholder="Email Address" value={email} onChange={e=>setEmail(e.target.value)} className="w-full p-3 border rounded-xl" required /><button disabled={loading} className="w-full bg-orange-600 text-white py-3 rounded-xl font-bold">{loading?'Sending...':'Get OTP'}</button></form>) : (<form onSubmit={handleConfirm} className="space-y-4"><p className="text-sm text-gray-500">OTP sent to {email}.</p><input placeholder="Enter OTP" value={resetData.otp} onChange={e=>setResetData({...resetData, otp:e.target.value})} className="w-full p-3 border rounded-xl" required /><input type="password" placeholder="New Password" value={resetData.new_password} onChange={e=>setResetData({...resetData, new_password:e.target.value})} className="w-full p-3 border rounded-xl" required /><button disabled={loading} className="w-full bg-green-600 text-white py-3 rounded-xl font-bold">{loading?'Processing...':'Reset Password'}</button></form>)}<button onClick={onClose} className="w-full mt-4 text-gray-400 text-sm hover:text-gray-600">Cancel</button></div></div>);
+        };
+
+        // --- AUTH SCREEN ---
+        const AuthScreen = ({ onAuth }) => {
+            const [isRegister, setIsRegister] = useState(false);
+            const [showForgot, setShowForgot] = useState(false);
+            const [loading, setLoading] = useState(false);
+            const [role, setRole] = useState('customer');
+            const [step, setStep] = useState(1);
+            const [otp, setOtp] = useState('');
+            const [regData, setRegData] = useState({});
+            const imageRef = useRef(null);
+
+            const handleRegChange = (e) => setRegData({...regData, [e.target.name]: e.target.value});
+
+            const handleSubmit = async (e) => {
+                e.preventDefault(); setLoading(true);
+                try {
+                    if(isRegister) {
+                        if(step === 1) {
+                            await auth.requestOtp(regData.email, 'register');
+                            setStep(2);
+                        } else {
+                            const fd = new FormData();
+                            Object.keys(regData).forEach(k => fd.append(k, regData[k]));
+                            fd.append('otp', otp); fd.append('role', role);
+                            if(imageRef.current?.files[0]) fd.append('image', imageRef.current.files[0]);
+                            await auth.register(fd);
+                            onAuth();
+                        }
+                    } else {
+                        const fd = new FormData(e.target);
+                        await auth.login({ username: fd.get('username'), password: fd.get('password') });
+                        onAuth();
+                    }
+                } catch(err) { alert(err.message); } finally { setLoading(false); }
+            };
+
+            return (
+                <div className="min-h-screen flex items-center justify-center bg-gray-100 p-4">
+                    {showForgot && <ForgotPasswordModal onClose={()=>setShowForgot(false)} />}
+                    <form onSubmit={handleSubmit} className="bg-white p-8 rounded-[2rem] shadow-xl w-full max-w-md fade-in border border-gray-100">
+                        <div className="text-center mb-6"><h1 className="text-4xl font-black text-orange-600">FoodMarket</h1><p className="text-gray-400 text-sm">{isRegister ? (step===1 ? 'Create Account' : 'Verify OTP') : 'Welcome Back'}</p></div>
+                        {!isRegister ? (<div className="space-y-4 mb-6"><div><label className="text-xs font-bold text-gray-400 ml-1 uppercase tracking-wide">Username</label><input name="username" placeholder="e.g. tasty_user" className="w-full p-4 bg-gray-50 border border-gray-100 rounded-xl focus:ring-2 focus:ring-orange-500 outline-none transition" required /></div><div><label className="text-xs font-bold text-gray-400 ml-1 uppercase tracking-wide">Password</label><input name="password" type="password" placeholder="••••••••" className="w-full p-4 bg-gray-50 border border-gray-100 rounded-xl focus:ring-2 focus:ring-orange-500 outline-none transition" required /></div><div className="text-right"><button type="button" onClick={()=>setShowForgot(true)} className="text-xs text-orange-500 font-bold hover:underline">Forgot Password?</button></div></div>) : (step === 1 ? (<div className="space-y-3"><div className="grid grid-cols-2 gap-2"><input name="first_name" placeholder="First Name" onChange={handleRegChange} className="p-3 border rounded-xl" required /><input name="last_name" placeholder="Last Name" onChange={handleRegChange} className="p-3 border rounded-xl" required /></div><input name="username" placeholder="Username" onChange={handleRegChange} className="w-full p-3 border rounded-xl" required /><input name="email" type="email" placeholder="Email" onChange={handleRegChange} className="w-full p-3 border rounded-xl" required /><input name="password" type="password" placeholder="Password" onChange={handleRegChange} className="w-full p-3 border rounded-xl" required /><input name="date_of_birth" type="date" onChange={handleRegChange} className="w-full p-3 border rounded-xl" required /><div className="flex gap-2 p-1 bg-gray-50 rounded-xl">{['customer','restaurant','delivery'].map(r => (<label key={r} className={`flex-1 text-center py-2 rounded-lg text-xs font-bold uppercase cursor-pointer ${role===r?'bg-white shadow text-orange-600':'text-gray-400'}`}><input type="radio" name="role" value={r} checked={role===r} onChange={()=>setRole(r)} className="hidden"/>{r}</label>))}</div>{role==='restaurant' && <div className="p-3 border rounded-xl space-y-2"><input name="restaurant_name" placeholder="Restaurant Name" onChange={handleRegChange} className="w-full p-2 border rounded" required/><input name="address" placeholder="Full Address" onChange={handleRegChange} className="w-full p-2 border rounded" required/><input type="file" ref={imageRef} className="w-full text-sm"/></div>}</div>) : (<div className="space-y-4 animate-fade-in mb-6"><div className="bg-green-50 text-green-700 p-3 rounded-xl text-sm text-center">OTP sent to {regData.email}!</div><input value={otp} onChange={e=>setOtp(e.target.value)} placeholder="Enter 6-digit OTP" className="w-full p-4 border rounded-xl text-center text-2xl tracking-widest font-bold" maxLength="6" required /></div>))}
+                        <button disabled={loading} className="w-full bg-orange-600 text-white py-4 rounded-xl font-bold mt-6 shadow-lg">{loading ? '...' : (isRegister ? (step===1?'Get OTP':'Verify & Register') : 'Login')}</button>
+                        <button type="button" onClick={() => {setIsRegister(!isRegister); setStep(1);}} className="w-full text-center text-sm text-gray-500 mt-4">{isRegister ? 'Already have an account? Login' : 'New here? Register'}</button>
+                    </form>
+                </div>
+            );
+        };
+
+        // --- DELIVERY DASHBOARD ---
+        const DeliveryDashboard = ({ user }) => {
+            const [view, setView] = useState('available');
+            const [orders, setOrders] = useState([]);
+            const [refresh, setRefresh] = useState(0);
+            const [inspectUser, setInspectUser] = useState(null);
+
+            useEffect(() => {
+                apiCall(`/api/orders/`).then(r=>r&&r.json()).then(setOrders);
+            }, [refresh]);
+
+            const updateStatus = async (id, status) => {
+                const res = await apiCall(`/api/orders/${id}/update_status/`, 'PATCH', {status});
+                if(res && res.ok) setRefresh(r=>r+1);
+                else alert((await res.json()).error);
+            };
+
+            const myJobs = orders.filter(o => o.delivery_partner === user.id);
+            const availableJobs = orders.filter(o => o.status === 'ready_for_pickup' && !o.delivery_partner);
+
+            return (
+                <div className="pb-20 min-h-screen bg-gray-50">
+                    <nav className="bg-white px-6 py-4 shadow-sm flex justify-between items-center sticky top-0 z-40">
+                        <div className="font-bold text-lg flex items-center gap-2 cursor-pointer" onClick={()=>setInspectUser(user.id)}><span className="text-xl">🚚</span> {user.username}</div>
+                        <div className="flex gap-4 items-center"><NotificationBell /><button onClick={auth.logout} className="text-red-500 font-bold text-xs bg-red-50 px-3 py-1.5 rounded-lg">Exit</button></div>
+                    </nav>
+                    <div className="max-w-4xl mx-auto p-4">
+                        <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex justify-between items-center mb-4">
+                            <div>
+                                <h2 className="font-bold text-gray-800">Your Stats</h2>
+                                <p className="text-xs text-gray-500">Fixed Rate: <span className="font-bold text-green-600">${DELIVERY_RATE}/order</span></p>
+                            </div>
+                            <div className="text-right">
+                                <p className="text-2xl font-black text-green-600">${(myJobs.filter(j=>j.status==='delivered').length * DELIVERY_RATE).toFixed(2)}</p>
+                                <p className="text-[10px] uppercase font-bold text-gray-400">Total Earnings</p>
+                            </div>
+                        </div>
+
+                        <div className="flex gap-2 mb-6 bg-white p-1 rounded-xl shadow-sm"><button onClick={()=>setView('available')} className={`flex-1 py-3 rounded-lg font-bold ${view==='available'?'bg-gray-900 text-white':'text-gray-500'}`}>Available ({availableJobs.length})</button><button onClick={()=>setView('myjobs')} className={`flex-1 py-3 rounded-lg font-bold ${view==='myjobs'?'bg-gray-900 text-white':'text-gray-500'}`}>Active ({myJobs.filter(j=>j.status!=='delivered').length})</button></div>
+                        
+                        {(view==='available' ? availableJobs : myJobs).map(o => (
+                            <div key={o.id} className="bg-white p-5 rounded-2xl shadow-sm border mb-4 fade-in">
+                                <div className="flex justify-between mb-3"><h3 className="font-bold text-lg">Order #{o.id}</h3><span className="bg-green-100 text-green-700 px-2 py-1 rounded text-xs font-bold uppercase">{o.status.replace(/_/g,' ')}</span></div>
+                                <div className="space-y-3 text-sm text-gray-600 bg-gray-50 p-4 rounded-xl mb-4 border border-gray-100">
+                                    <div className="flex justify-between items-center">
+                                        <span>🏪 Pickup:</span> 
+                                        <div className="text-right">
+                                            <span className="font-bold block">{o.restaurant_name}</span>
+                                            <a href={`https://www.google.com/maps/search/?api=1&query=${o.restaurant_name}`} target="_blank" className="text-blue-500 text-xs font-bold underline">Navigate ↗</a>
+                                        </div>
+                                    </div>
+                                    <div className="border-t border-gray-200 my-2"></div>
+                                    <div className="flex justify-between items-center">
+                                        <span>📍 Drop:</span> 
+                                        <div className="text-right">
+                                            <span className="font-bold block">{o.delivery_location || "No Address"}</span>
+                                            {o.delivery_location && <a href={`https://www.google.com/maps/search/?api=1&query=${o.delivery_location}`} target="_blank" className="text-blue-500 text-xs font-bold underline">Navigate ↗</a>}
+                                        </div>
+                                    </div>
+                                </div>
+                                {view==='available' && <button onClick={()=>updateStatus(o.id, 'accepted')} className="w-full bg-green-600 text-white py-3 rounded-xl font-bold shadow-lg hover:scale-[1.02] transition">Accept Job</button>}
+                                {view==='myjobs' && o.status==='out_for_delivery' && <button onClick={()=>updateStatus(o.id, 'delivered')} className="w-full bg-orange-600 text-white py-3 rounded-xl font-bold shadow-lg hover:scale-[1.02] transition">Mark Delivered</button>}
+                                {view==='myjobs' && o.status==='delivered' && <div className="text-center text-green-600 font-bold bg-green-50 py-2 rounded-xl border border-green-100">Order Completed ✅</div>}
+                            </div>
+                        ))}
+                        {(view==='available' ? availableJobs : myJobs).length === 0 && <p className="text-center text-gray-400 py-10">No orders found.</p>}
+                    </div>
+                    {inspectUser && <StandardProfile userId={inspectUser} onClose={()=>setInspectUser(null)} />}
+                </div>
+            );
+        };
+
+        // --- RESTAURANT APP ---
+        const RestaurantDashboard = ({ user }) => {
+            const [view, setView] = useState('orders');
+            const [orders, setOrders] = useState([]);
+            const [dishes, setDishes] = useState([]);
+            const [refresh, setRefresh] = useState(0);
+            const [editDish, setEditDish] = useState(null);
+            const [chatOrder, setChatOrder] = useState(null);
+            const [inspectUser, setInspectUser] = useState(null);
+            const [search, setSearch] = useState("");
+            const token = auth.getToken();
+
+            useEffect(() => {
+                apiCall(`/api/orders/`).then(r=>r&&r.json()).then(setOrders);
+                apiCall(`/api/menu/dishes/`).then(r=>r&&r.json()).then(setDishes);
+            }, [refresh]);
+
+            const handleDish = async (e) => { e.preventDefault(); const fd = new FormData(e.target); fd.append('is_available', 'true'); const url = editDish ? `/api/menu/dishes/${editDish.id}/` : `/api/menu/dishes/`; const method = editDish ? 'PATCH' : 'POST'; const res = await apiCall(url, method, fd); if(res && res.ok) { setRefresh(r=>r+1); setEditDish(null); if(!editDish) e.target.reset(); } };
+            const deleteDish = async (id) => { if(confirm("Delete this dish?")) { await apiCall(`/api/menu/dishes/${id}/`, 'DELETE'); setRefresh(r=>r+1); }};
+            const updateStatus = async (id, status) => { await apiCall(`/api/orders/${id}/update_status/`, 'PATCH', {status}); setRefresh(r=>r+1); };
+
+            const filteredOrders = orders.filter(o => String(o.id).includes(search) || o.status.includes(search.toLowerCase()));
+            const filteredMenu = dishes.filter(d => d.name.toLowerCase().includes(search.toLowerCase()));
+
+            return (
+                <div className="pb-20 min-h-screen bg-gray-50">
+                    <nav className="bg-white px-6 py-4 shadow-sm flex justify-between items-center sticky top-0 z-40">
+                        <div className="font-bold text-lg flex items-center gap-2 cursor-pointer" onClick={()=>setInspectUser(user.id)}><div className="w-8 h-8 bg-orange-100 rounded-full flex items-center justify-center text-orange-600">👨‍🍳</div><span>{user.username}</span></div>
+                        <div className="flex gap-4 items-center"><NotificationBell /><button onClick={auth.logout} className="text-red-500 font-bold bg-red-50 px-3 py-1.5 rounded-lg text-xs hover:bg-red-100 transition">Log Out</button></div>
+                    </nav>
+                    <div className="max-w-6xl mx-auto p-4 md:p-6">
+                        <div className="flex gap-2 mb-6 bg-white p-1.5 rounded-2xl shadow-sm border border-gray-100 max-w-md mx-auto"><button onClick={()=>{setView('orders'); setSearch('');}} className={`flex-1 py-2.5 rounded-xl font-bold text-sm transition ${view==='orders'?'bg-gray-900 text-white shadow':'text-gray-500 hover:bg-gray-50'}`}>Orders</button><button onClick={()=>{setView('menu'); setSearch('');}} className={`flex-1 py-2.5 rounded-xl font-bold text-sm transition ${view==='menu'?'bg-gray-900 text-white shadow':'text-gray-500 hover:bg-gray-50'}`}>Menu</button></div>
+                        {view === 'orders' && <div className="space-y-6 fade-in"><SearchBar value={search} onChange={setSearch} placeholder="Search orders by ID..." /><div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">{filteredOrders.map(o => (<div key={o.id} className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex flex-col justify-between hover:shadow-md transition"><div><div className="flex justify-between mb-4"><div><h3 className="font-bold text-lg">#{o.id}</h3><button onClick={()=>setInspectUser(o.customer)} className="text-xs text-blue-500 font-medium hover:underline">View Customer</button></div><div className="text-right"><span className={`uppercase text-[10px] font-bold px-2 py-1 rounded-full ${o.status==='cancelled'?'bg-red-100 text-red-600':o.status==='delivered'?'bg-green-100 text-green-600':'bg-blue-50 text-blue-600'}`}>{o.status.replace(/_/g,' ')}</span><div className="text-[10px] text-gray-400 mt-1">{timeAgo(o.created_at)}</div></div></div>{o.delivery_location && <div className="mb-4 text-xs bg-gray-50 p-3 rounded-xl border border-gray-100 text-gray-600 flex items-center justify-between group"><span className="truncate mr-2">📍 {o.delivery_location}</span>{o.delivery_location.includes(',') && <a href={`https://www.google.com/maps/search/?api=1&query=${o.delivery_location}`} target="_blank" className="text-blue-500 underline font-bold whitespace-nowrap opacity-0 group-hover:opacity-100 transition">Map ↗</a>}</div>}</div><div className="flex gap-2 border-t border-gray-50 pt-4 flex-wrap"><button onClick={()=>setChatOrder(o)} className="bg-gray-100 text-gray-600 px-4 py-2 rounded-xl font-bold text-xs hover:bg-gray-200 transition">💬 Chat</button>{o.status === 'ordered' && <><button onClick={()=>updateStatus(o.id, 'confirmed')} className="bg-green-500 text-white px-4 py-2 rounded-xl font-bold text-xs flex-1 shadow hover:bg-green-600 transition">Confirm</button><button onClick={()=>updateStatus(o.id, 'cancelled')} className="bg-red-50 text-red-600 px-4 py-2 rounded-xl font-bold text-xs hover:bg-red-100 transition">Reject</button></>}{o.status === 'preparing' && <button onClick={()=>updateStatus(o.id, 'ready_for_pickup')} className="bg-blue-500 text-white px-4 py-2 rounded-xl font-bold text-xs flex-1 shadow hover:bg-blue-600 transition">Ready for Pickup</button>}{o.status === 'ready_for_pickup' && <div className="flex-1 text-center py-2 bg-gray-100 rounded-xl text-xs font-bold text-gray-500">Waiting for Driver...</div>}{o.status === 'out_for_delivery' && <div className="flex-1 text-center py-2 bg-green-50 text-green-700 rounded-xl text-xs font-bold">Driver Out for Delivery</div>}</div></div>))}</div>{filteredOrders.length===0 && <div className="text-center py-20 bg-white rounded-3xl border border-dashed border-gray-200"><p className="text-gray-400">No matching orders found.</p></div>}</div>}
+                        {view === 'menu' && <div className="fade-in"><div className="flex flex-col md:flex-row gap-6"><div className="md:w-1/3 order-1 md:order-2"><div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 sticky top-24"><h3 className="font-bold mb-4 text-lg">{editDish ? `Edit Item` : 'Add New Item'}</h3><form onSubmit={handleDish} className="space-y-3"><input name="name" defaultValue={editDish?.name} placeholder="Item Name" className="w-full p-3 border rounded-xl bg-gray-50 focus:bg-white transition" required /><input name="description" defaultValue={editDish?.description} placeholder="Description" className="w-full p-3 border rounded-xl bg-gray-50 focus:bg-white transition" required /><div className="flex gap-3"><input name="price" type="number" step="0.01" defaultValue={editDish?.price} placeholder="Price" className="w-1/3 p-3 border rounded-xl bg-gray-50 focus:bg-white transition" required /><select name="food_type" defaultValue={editDish?.food_type||'veg'} className="flex-1 p-3 border rounded-xl bg-gray-50 focus:bg-white transition"><option value="veg">Veg</option><option value="non_veg">Non-Veg</option><option value="egg">Egg</option></select></div><input type="file" name="image" className="w-full p-2 border rounded-xl bg-gray-50 text-sm file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-orange-50 file:text-orange-700 hover:file:bg-orange-100" /><div className="flex gap-2 mt-4"><button className="flex-1 bg-green-600 text-white py-3 rounded-xl font-bold shadow-lg shadow-green-100 hover:bg-green-700 transition">{editDish?'Save Changes':'Add Item'}</button>{editDish && <button type="button" onClick={()=>{setEditDish(null);document.querySelector('form').reset()}} className="px-4 bg-gray-100 rounded-xl font-bold text-gray-500 hover:bg-gray-200">Cancel</button>}</div></form></div></div><div className="md:w-2/3 order-2 md:order-1 space-y-4"><SearchBar value={search} onChange={setSearch} placeholder="Search menu..." />{filteredMenu.map(d => (<div key={d.id} className="bg-white p-4 rounded-2xl border border-gray-100 flex items-center justify-between shadow-sm hover:shadow-md transition"><div className="flex items-center gap-4"><div className="w-16 h-16 bg-gray-100 rounded-xl overflow-hidden border border-gray-100 flex-shrink-0">{d.image && <img src={d.image} className="w-full h-full object-cover"/>}</div><div><div className="font-bold text-gray-800 flex items-center gap-2"><FoodTypeIcon type={d.food_type}/> {d.name}</div><div className="text-sm font-bold text-green-600 mt-1">${d.price}</div></div></div><div className="flex gap-2"><button onClick={()=>setEditDish(d)} className="bg-blue-50 text-blue-600 p-2.5 rounded-xl hover:bg-blue-100 transition">✏️</button><button onClick={()=>deleteDish(d.id)} className="bg-red-50 text-red-600 p-2.5 rounded-xl hover:bg-red-100 transition">🗑️</button></div></div>))}</div></div></div>}
+                    </div>
+                    {chatOrder && <ChatModal order={chatOrder} onClose={()=>setChatOrder(null)} />}
+                    {inspectUser && <StandardProfile userId={inspectUser} onClose={()=>setInspectUser(null)} />}
+                </div>
+            );
+        };
+
+        // --- CUSTOMER APP ---
+        const CustomerApp = ({ user }) => {
+            const [view, setView] = useState('home');
+            const [orders, setOrders] = useState([]);
+            const [restaurants, setRestaurants] = useState([]);
+            const [menu, setMenu] = useState([]);
+            const [cart, setCart] = useState({});
+            const [selRest, setSelRest] = useState(null);
+            const [inspectUser, setInspectUser] = useState(null);
+            const [chatOrder, setChatOrder] = useState(null);
+            const [reviewOrder, setReviewOrder] = useState(null);
+            const [dishDetail, setDishDetail] = useState(null);
+            const [location, setLocation] = useState("");
+            const [search, setSearch] = useState("");
+            const [filterType, setFilterType] = useState('all');
+            const [globalDishes, setGlobalDishes] = useState([]);
+
+            useEffect(() => {
+                apiCall(`/api/restaurants/`).then(r=>r&&r.json()).then(setRestaurants);
+                const fetchOrders = () => apiCall(`/api/orders/`).then(r=>r&&r.json()).then(d=>d&&setOrders(d));
+                fetchOrders(); setInterval(fetchOrders, 5000);
+            }, []);
+
+            useEffect(() => {
+                if(search.length > 2 && view === 'home') {
+                    apiCall(`/api/menu/dishes/?search=${search}`).then(r=>r&&r.json()).then(setGlobalDishes);
+                } else setGlobalDishes([]);
+            }, [search, view]);
+
+            const fetchMenu = async (r) => { setSelRest(r); const res = await apiCall(`/api/menu/dishes/?restaurant=${r.id}`); if(res) { setMenu(await res.json()); setView('menu'); setSearch(''); }};
+            const addToCart = (d) => setCart(p => ({...p, [d.id]: p[d.id] ? {...p[d.id], qty: p[d.id].qty+1} : {...d, qty: 1}}));
+            const removeFromCart = (id) => setCart(p => { const n={...p}; delete n[id]; return n; });
+            const getLocation = () => { if(navigator.geolocation) { navigator.geolocation.getCurrentPosition((pos) => setLocation(`${pos.coords.latitude}, ${pos.coords.longitude}`), () => alert("Permission denied or error.")); } else alert("Geolocation not supported."); };
+            const placeOrder = async () => { const dishIds = Object.values(cart).flatMap(i => Array(i.qty).fill(i.id)); const total = Object.values(cart).reduce((a,b)=>a+(b.price*b.qty),0); await apiCall(`/api/orders/`, 'POST', { dishes: dishIds, total_price: total, customer: user.id, delivery_location: location }); setCart({}); setView('orders'); };
+
+            const filteredMenu = menu.filter(d => (filterType==='all' || d.food_type===filterType) && d.name.toLowerCase().includes(search.toLowerCase()));
+            const filteredRest = restaurants.filter(r => r.name.toLowerCase().includes(search.toLowerCase()));
+
+            return (
+                <div className="pb-24 min-h-screen bg-gray-50">
+                    <nav className="bg-white px-6 py-4 shadow-sm flex justify-between items-center sticky top-0 z-40">
+                        <div className="font-bold text-xl cursor-pointer text-orange-600" onClick={()=>setView('home')}>FoodMarket</div>
+                        <div className="flex gap-3 items-center"><button onClick={()=>setInspectUser(user.id)} className="w-9 h-9 bg-gray-100 rounded-full flex items-center justify-center hover:bg-gray-200 transition">👤</button><button onClick={()=>setView('cart')} className="relative p-2 bg-gray-100 rounded-lg">🛒 {Object.keys(cart).length>0 && <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] w-4 h-4 rounded-full flex items-center justify-center font-bold border border-white">{Object.values(cart).length}</span>}</button><NotificationBell /><button onClick={auth.logout} className="text-red-500 font-bold text-xs bg-red-50 px-3 py-1.5 rounded-lg hover:bg-red-100 transition">Exit</button></div>
+                    </nav>
+                    <div className="max-w-md mx-auto p-4">
+                        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-gray-900/90 backdrop-blur-md text-white px-6 py-3 rounded-full shadow-2xl flex gap-8 z-50 items-center"><button onClick={()=>setView('home')} className={`text-2xl transition ${view==='home'?'scale-125 text-orange-400':'opacity-50 hover:opacity-100'}`}>🏠</button><button onClick={()=>setView('cart')} className={`text-2xl relative transition ${view==='cart'?'scale-125 text-orange-400':'opacity-50 hover:opacity-100'}`}>🛒 {Object.keys(cart).length>0 && <span className="absolute -top-1 -right-2 bg-red-500 text-white text-[10px] w-4 h-4 rounded-full flex items-center justify-center font-bold border border-black">{Object.values(cart).length}</span>}</button><button onClick={()=>setView('orders')} className={`text-2xl transition ${view==='orders'?'scale-125 text-orange-400':'opacity-50 hover:opacity-100'}`}>🧾</button></div>
+                        {view === 'home' && <div className="fade-in"><div className="mb-6"><SearchBar value={search} onChange={setSearch} placeholder="Search restaurants or dishes..." /></div>{search && globalDishes.length > 0 && <div className="mb-8 animate-fade-in"><h3 className="font-bold text-gray-400 text-xs uppercase tracking-wider mb-3">Matching Dishes</h3><div className="space-y-3">{globalDishes.map(d => (<div key={d.id} onClick={()=>setDishDetail(d)} className="bg-white p-3 rounded-2xl shadow-sm border border-gray-100 flex items-center gap-4 cursor-pointer hover:bg-orange-50 transition"><div className="w-14 h-14 bg-gray-100 rounded-xl overflow-hidden flex-shrink-0">{d.image && <img src={d.image} className="w-full h-full object-cover"/>}</div><div><div className="font-bold flex items-center gap-2"><FoodTypeIcon type={d.food_type}/> {d.name}</div><div className="text-xs text-gray-500 mt-0.5">${d.price} • <span className="text-orange-600 font-bold">{d.restaurant_name}</span></div></div></div>))}</div></div>}<div className="grid gap-5"><div className="flex justify-between items-end"><h2 className="font-bold text-2xl text-gray-800">Restaurants</h2></div>{filteredRest.map(r => (<div key={r.id} onClick={()=>fetchMenu(r)} className="bg-white rounded-3xl shadow-sm border border-gray-100 cursor-pointer overflow-hidden hover:shadow-lg transition transform hover:-translate-y-1"><div className="h-40 bg-gray-100 relative">{r.image ? <img src={r.image} className="w-full h-full object-cover"/> : <div className="w-full h-full flex items-center justify-center text-4xl">🏪</div>}<div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent"></div><div className="absolute bottom-4 left-4 text-white"><h3 className="font-bold text-xl">{r.name}</h3><p className="text-xs opacity-90 flex items-center gap-1">📍 {r.address}</p></div></div></div>))}</div></div>}
+                        {view === 'menu' && <div className="fade-in space-y-4"><div className="flex items-center gap-3"><button onClick={()=>setView('home')} className="bg-white p-2 rounded-full shadow-sm hover:bg-gray-100">⬅</button><h2 className="font-bold text-2xl text-gray-800">{selRest.name}</h2></div><SearchBar value={search} onChange={setSearch} placeholder={`Search in ${selRest.name}...`} /><div className="flex gap-2 overflow-x-auto no-scrollbar pb-2">{['all','veg','non_veg','egg'].map(t => (<button key={t} onClick={()=>setFilterType(t)} className={`px-5 py-2 rounded-full text-xs font-bold capitalize whitespace-nowrap transition ${filterType===t ? 'bg-black text-white shadow-lg' : 'bg-white border border-gray-200 text-gray-600'}`}>{t.replace('_',' ')}</button>))}</div><div className="space-y-3">{filteredMenu.map(d => (<div key={d.id} onClick={()=>setDishDetail(d)} className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm flex justify-between gap-4 cursor-pointer hover:border-orange-200 transition group"><div className="flex-1"><div className="font-bold text-lg flex items-center gap-2 mb-1"><FoodTypeIcon type={d.food_type}/> {d.name}</div><div className="text-xs text-gray-500 mb-2 leading-relaxed line-clamp-2">{d.description}</div><div className="flex items-center gap-3"><span className="font-bold text-gray-900">${d.price}</span>{d.rating > 0 && <span className="text-[10px] bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded font-bold">⭐ {d.rating.toFixed(1)}</span>}</div></div><div className="w-24 h-24 bg-gray-100 rounded-xl overflow-hidden flex-shrink-0 relative group-hover:scale-105 transition">{d.image && <img src={d.image} className="w-full h-full object-cover"/>}<button className="absolute bottom-1 right-1 bg-white text-orange-600 w-7 h-7 rounded-full shadow-md font-bold flex items-center justify-center text-lg">+</button></div></div>))}</div></div>}
+                        {view === 'cart' && <div className="fade-in space-y-6"><h2 className="font-bold text-2xl">Checkout</h2>{Object.keys(cart).length === 0 ? <div className="text-center py-20"><div className="text-6xl mb-4 grayscale opacity-30">🛒</div><p className="text-gray-400">Cart is empty</p><button onClick={()=>setView('home')} className="mt-4 text-orange-600 font-bold">Start Shopping</button></div> : <><div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">{Object.values(cart).map(i => (<div key={i.id} className="flex justify-between items-center p-5 border-b border-gray-50"><div><span className="font-bold text-lg block">{i.name}</span> <span className="text-gray-400 text-sm">Quantity: {i.qty}</span></div><div className="flex items-center gap-4"><span className="font-bold text-gray-900">${(i.price*i.qty).toFixed(2)}</span><button onClick={()=>removeFromCart(i.id)} className="w-8 h-8 bg-red-50 text-red-500 rounded-full flex items-center justify-center hover:bg-red-100 transition">✕</button></div></div>))}</div><div className="bg-white p-5 rounded-3xl border border-gray-100 shadow-sm"><h3 className="font-bold text-sm text-gray-400 uppercase tracking-wide mb-3">Delivery Details</h3><div className="flex gap-2 mb-4"><input value={location} onChange={e=>setLocation(e.target.value)} placeholder="Enter delivery address..." className="flex-1 bg-gray-50 border-0 rounded-xl p-3 text-sm focus:ring-2 focus:ring-orange-500 transition"/><button onClick={getLocation} className="bg-blue-50 text-blue-600 w-12 rounded-xl flex items-center justify-center text-xl hover:bg-blue-100 transition">📍</button></div><div className="flex justify-between font-bold text-xl pt-4 border-t border-gray-50"><span>Total</span><span>${Object.values(cart).reduce((a,b)=>a+(b.price*b.qty),0).toFixed(2)}</span></div><button onClick={placeOrder} className="w-full bg-gray-900 text-white py-4 rounded-xl font-bold shadow-xl mt-6 hover:scale-[1.02] transition">Place Order</button></div></>}</div>}
+                        {view === 'orders' && <div className="fade-in space-y-4"><h2 className="font-bold text-2xl mb-4">Active Orders</h2>{orders.map(o => (<div key={o.id} className="bg-white p-5 rounded-3xl shadow-sm border border-gray-100"><div className="flex justify-between items-center mb-4"><div><span className="font-bold text-lg block">Order #{o.id}</span><span className="text-xs text-gray-400">{timeAgo(o.created_at)}</span></div><span className={`text-xs font-bold px-3 py-1.5 rounded-full uppercase tracking-wide ${o.status==='cancelled'?'bg-red-100 text-red-600':o.status==='delivered'?'bg-green-100 text-green-700':'bg-blue-50 text-blue-600'}`}>{o.status.replace('_', ' ')}</span></div><div className="w-full bg-gray-100 h-2 rounded-full mb-6 overflow-hidden"><div className={`h-full ${o.status==='cancelled'?'bg-red-500':'bg-green-500'} transition-all duration-1000 ease-out`} style={{width: o.status==='ordered'?'10%':o.status==='preparing'?'40%':o.status==='out_for_delivery'?'75%':'100%'}}></div></div><div className="text-xs text-gray-400 mb-3 text-center uppercase tracking-widest">{o.status === 'ready_for_pickup' ? 'Food is Ready - Waiting for Driver' : o.status.replace(/_/g, ' ')}</div><div className="flex gap-3"><button onClick={()=>setChatOrder(o)} className="flex-1 bg-gray-100 text-gray-600 py-3 rounded-xl font-bold text-sm hover:bg-gray-200 transition">💬 Chat</button>{o.status === 'delivered' && <button onClick={()=>setReviewOrder(o)} className="flex-1 bg-orange-100 text-orange-600 py-3 rounded-xl font-bold text-sm hover:bg-orange-200 transition">⭐ Rate</button>}</div></div>))}</div>}
+                    </div>
+                    {dishDetail && <DishDetailModal dish={dishDetail} onClose={()=>setDishDetail(null)} onAdd={addToCart} />}
+                    {chatOrder && <ChatModal order={chatOrder} onClose={()=>setChatOrder(null)} />}
+                    {reviewOrder && <ReviewModal order={reviewOrder} onClose={()=>setReviewOrder(null)} />}
+                    {inspectUser && <StandardProfile userId={inspectUser} onClose={()=>setInspectUser(null)} />}
+                </div>
+            );
+        };
+
+        const App = () => {
+            const [user, setUser] = useState(auth.getUser());
+            const [token, setToken] = useState(auth.getToken());
+            useEffect(() => { if(!token) setUser(null); else setUser(auth.getUser()); }, [token]);
+            const handleAuth = () => { setToken(auth.getToken()); setUser(auth.getUser()); };
+            if(!user) return <AuthScreen onAuth={handleAuth} />;
+            if(user.role === 'delivery') return <DeliveryDashboard user={user} />;
+            return user.role === 'restaurant' ? <RestaurantDashboard user={user} /> : <CustomerApp user={user} />;
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+    {% endverbatim %}
+</body>
+</html>
