@@ -5,7 +5,7 @@ django-cors-headers
 django-filter
 python-dotenv
 Pillow
-psycopg2-binary  # Uncomment for PostgreSQL
+psycopg2-binary  # Comment out if you not using PostgreSQL for DB
 # mysqlclient      # Uncomment for MySQL
 dj-database-url
 whitenoise
