@@ -7,3 +7,6 @@ python-dotenv
 Pillow
 # psycopg2-binary  # Uncomment for PostgreSQL
 # mysqlclient      # Uncomment for MySQL
+dj-database-url
+whitenoise
+gunicorn
