@@ -1,12 +1,13 @@
-django>=4.0
+django>=5.0
 djangorestframework
 djangorestframework-simplejwt
 django-cors-headers
 django-filter
 python-dotenv
 Pillow
-# psycopg2-binary  # Uncomment for PostgreSQL
+psycopg2-binary  # Uncomment for PostgreSQL
 # mysqlclient      # Uncomment for MySQL
 dj-database-url
 whitenoise
 gunicorn
+waitress

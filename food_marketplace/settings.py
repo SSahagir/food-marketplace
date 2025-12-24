@@ -8,7 +8,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 dotenv.load_dotenv(BASE_DIR / '.env')
 
 SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-default-key')
-DEBUG = os.getenv('DEBUG', 'True') == 'True'
+DEBUG = False
 
 ALLOWED_HOSTS = ['*']
 ALLOWED_HOSTS += ['.vercel.app', '.now.sh', 'localhost', '127.0.0.1']
@@ -123,3 +123,35 @@ EMAIL_USE_TLS = os.getenv('EMAIL_USE_TLS', 'True') == 'True'
 EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER', '')
 EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD', '')
 DEFAULT_FROM_EMAIL = EMAIL_HOST_USER
+
+# ==============================================
+# VERCEL / PRODUCTION SETTINGS
+# ==============================================
+import os
+import dj_database_url
+
+# 1. Handle Allowed Hosts
+ALLOWED_HOSTS += ['.vercel.app', '.now.sh', 'localhost', '127.0.0.1']
+
+# 2. Database Configuration
+# Support DATABASE_PUBLIC_URL (Railway) or DATABASE_URL (Standard)
+if 'DATABASE_PUBLIC_URL' in os.environ:
+    os.environ.setdefault('DATABASE_URL', os.environ['DATABASE_PUBLIC_URL'])
+
+if 'DATABASE_URL' in os.environ:
+    DATABASES['default'] = dj_database_url.config(
+        conn_max_age=600,
+        ssl_require=True
+    )
+
+# 3. Static Files (Whitenoise)
+STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
+STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+
+# Inject Whitenoise Middleware if not present
+if 'whitenoise.middleware.WhiteNoiseMiddleware' not in MIDDLEWARE:
+    try:
+        index = MIDDLEWARE.index('django.middleware.security.SecurityMiddleware')
+        MIDDLEWARE.insert(index + 1, 'whitenoise.middleware.WhiteNoiseMiddleware')
+    except ValueError:
+        MIDDLEWARE.insert(0, 'whitenoise.middleware.WhiteNoiseMiddleware')
